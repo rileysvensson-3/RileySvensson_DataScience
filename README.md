@@ -1,6 +1,6 @@
-# RileySvensson_DataScience
+# Welcome to my Data Science Portfolio!
 
-I am Riley Svensson, a data scientist with a master's degree in business analytics. This repository is a collection of my work in data science across many domains.
+I am Riley Svensson, a data scientist with a master's degree in business analytics from Cal Poly's Orfalea College of Business. This repository is a collection of my work in data science across many domains, which additionally showcases my undergraduate experience in business and statistics.
 
 ## Contact
 
