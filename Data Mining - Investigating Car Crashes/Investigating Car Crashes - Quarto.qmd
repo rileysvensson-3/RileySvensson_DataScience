@@ -1,0 +1,513 @@
+---
+title: "Investigating Car Crashes for Business Applications "
+author: "Riley Svensson"
+format: 
+  html:
+    self-contained: true
+    code-tools: true
+    toc: true
+    number-sections: true
+    code-fold: true
+    theme: journal
+editor: source
+execute: 
+  error: true
+  echo: true
+  message: false
+  warning: false
+---
+
+```{r setup}
+library(tidyverse)
+library(broom)
+library(caret)
+library(knitr)
+library(DT)
+library(readxl)
+library(kableExtra)
+library(quarto)
+library(htmltools)
+library(ggplot2)
+options(scipen = 9)
+
+car_crash <- read_csv("/Users/rileysvensson/Desktop/GSB 530 - Data Mining/GSB 530 - Data Mining/Project/car_crash.csv")
+
+```
+
+# Business Understanding:
+
+The car crash dataset offers multiple opportunities to explore the severity of car crashes and reasons associated with them. Analyzing the explanatory variables also allows for the creation of new insights such as categorizing severity of crashes by certain regions and seasons within the year. To further analyze which target variables should be selected, we visualized a preview of raw values, that lead us to pose several business relevant questions.
+
+```{r, fig.cap = 'FIGURE 1.1: Preview of Raw Data For Initial Analysis'}
+car_crash_preview <- car_crash[, c(2:11)]
+
+car_crash_preview |> 
+  head(n = 500) |> 
+  datatable(caption = 'Interactive Preview of Relevant Variables')
+
+```
+
+Following a deep-dive into the data, we formulated our questions for this analysis by taking the position of an insurance company. In order to maximize revenue, it is important to find out factors that could influence the rate of insurance plans. For example, if the result shows that a certain region (Southern California, Northern California, or Central California) causes more accidents, the insurance company can raise the premiums for those specific regions. The same is true for crash reasons. If a specific type of crash significantly increases the chance of a fatal accident, then the company can charge a policy holder more if they have been involved in an accident that was caused by said crash type. 
+
+Essentially, it is of the company's interest to find out the most important predictor variables that help determine whether an accident is fatal or not in order to adjust its policy rates accordingly.
+
+With the business objective outlined, here are the questions to consider during the data mining process:
+
+## Business Analysis Questions:
+
+1.  **What factors contribute to the severity of an accident?**
+
+2.  **Do weather and day of week influence whether or not an accident is fatal?**
+
+3.  **What type of crash or crash reason causes the highest probability of a fatal accident?**
+
+4.  **What are the reasons behind different types of crashes?**
+
+5.  **How should an insurance company alter policy rate's for groups of policyholders with distinct characteristics?**
+
+# Data Understanding:
+
+In terms of data exploration, following an initial analysis, there are **several potential target variables** that could be analyzed and predicted upon, in hopes of answering our posed questions. The **most obvious is `Severity`**, which is a binary value representing if a person was involved in a fatal or minor car crash. With this categorical response, it would be optimal to pursue logistic regression in determining what factors influence the severity of a car accident.  Before pursuing this, we derived a frequency table of our `Severity` variable, revealing a case of imbalance classes.  **As only 8% of the entire 112,660 rows contained a severe accident, this forced us to adjust the cutoff value to be lower than 50% (8%), to account for this inequality**.  Now when focusing on metrics such as accuracy and sensitivity, our values are not skewed by the imbalance of our dependent variable, as we would've predicted a low number of severe crashes correctly.
+
+```{r, fig.cap = 'FIGURE 2.1: Table of Severity Counts'}
+severity_table <- table(car_crash$Severity)
+
+severity_table <- as.data.frame(severity_table)
+severity_table$Freq <- format(severity_table$Freq, big.mark = ",")
+
+kable(severity_table, 
+      caption = "Frequency of Car Crash Severities", 
+      col.names = c("Severity Level - Yes (1) No (0)", "Count"),
+      align = c("c", "c")) |>  
+  kable_styling("striped")
+```
+
+Another insightful supervised analysis is to predict what type of crash will occur, based on factors such as the crash's reason, if it occurred on a `Highway`, in the `Daylight`, in the rain (`Clear Weather`) , on the `Weekend`, or even the area of the crash (`County_Categorized`).  Each one of these factors could have a different effect on the resulting `Crash Type`, which can be used by insurance companies to determine the most common crashes and types that are increased by factors like rain and lack of daylight.  To conduct this, a classification decision tree would be able to directly answer our fourth posed question.  For instance, if our analysis reveals that a certain `Crash Reason` is more likely to result in severe crashes such as Hit-Object (E) and Broadside (C) collisions as shown below in *Figure 1.3*, insurance companies could adjust their rates for drivers in regions with higher rates of these reasons. Additionally, this data can be used for targeted awareness campaigns, advising drivers of these areas to take precautions and potentially reducing the frequency and severity of these types of accidents. This approach not only mitigates financial risks for the insurance companies but also contributes to overall road safety, creating a positive impact on the community and the company's reputation.
+
+```{r, fig.cap = 'FIGURE 2.2: Severity by Crash Type'}
+
+car_crash_types <- car_crash |> 
+  mutate(CrashType = as.factor(CrashType),
+         CrashType = fct_recode(CrashType, "Head On" = "A", "Sideswipe" = "B", "Rear End" = "C", "Broadside" = "D", "Hit Object" = "E", "Overturned " = "F", "Vehicle/Pedestrian" = "G"))
+
+ggplot(car_crash_types, aes(x = CrashType, fill = as.factor(Severity))) +   geom_bar(position = position_dodge()) +
+    scale_fill_manual(values = c("0" = "blue", "1" = "red"),
+                      name = "Crash Severity",
+                      labels = c("Non-severe (0)", "Severe (1)")) +
+    labs(title = "Severity by Crash Type",
+         x = "Crash Type",
+         y = "Count") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+On the other hand, if we wish to let the data paint a story on its own, without the addition of any preconceived intuition like selecting `Severity` and `Crash Type` as target variables, k-means cluster analysis would be the most favorable method.  K-means clustering relies on the data's full set of variables to create heterogeneous groups who are similar within, that can be used by analysts to determine key differences between these groups and what factors are causing these variations.  This method is optimal for large datasets and can handle the inclusion of both numerical and categorical inputs, to form these clusters.   After their formation, we can reattach each observation's cluster to the original data, and summarize our critical variables like `Severity`, to determine the most unsafe group, and what factors contribute to these results.
+
+# Data Preparation:
+
+In terms of data wrangling and cleaning processes, many steps need to be carried out in order to prepare a proper data-set for analysis. First off, we search for any cases of missing or arbitrary data, which reveal none and indicate that our observations were complete and sensible.
+
+```{r echo=TRUE, results = 'hide'}
+# Determine if there are any missing values
+sum(is.null(car_crash))
+
+# Rename ViolCats to be Crash_Reasons
+car_crash <- car_crash |> 
+  rename(Crash_Reasons = ViolCat)
+```
+
+However, there are still other data wrangling actions that must be done before any analysis can be properly conducted, which include the following steps:
+
+## **Categorizing / User-Defined Binning:**
+
+Due to the many different levels or choices of our categorical variables such as `Weekday` , `Crash Reasons` , `Month`, etc, we re-defined these categories to enhance the potential insights from these variables. To do this, we created 5 new columns, which re-categorized the original variables to a smaller subset of choices, in order to reveal new relationships within the logistic model and k-means clustering.
+
+In terms of these processes, the explanation of each variable's adjustment is listed below:
+
+<!-- -->
+
+1.  New Variable: `County_Categorized` that bins `County` into the Central, NorCal, or SoCal regions of California. San Jose and the Los Angeles valley are the cutoff points for determining which regions fall into Central California and separate the regions.
+
+2.  New Variable: `Month_Season` that recategorizes `Month` into: Winter (1-3), Spring (4-6), Summery (7-9) and Fall (10-12).
+
+3.  We chose to rename `ViolCat` to be more informative as `Crash_Reasons`, then create a new variable called `Crash_Reasons_Categorized` that has two options either, Aggressive Driving or Negligence. The selection of each crash reason follows this breakdown:
+
+    **Aggressive Driving:** 03 (Following Too Closely), 04 (Improper Passing), 06 (Improper Turning)
+
+    **Negligence:** 01 (Driving or Bicycling Under the Influence of Alcohol or Drug), 10 (Traffic Signals and Signs), 11 (Fell Asleep), 07(Automobile Right of Way), 08(Pedestrian Right of Way), 09 (Pedestrian Violation)
+
+4.  New Variable: `Crash_Type_Categorized` that dummifies `CrashType` into two categories of involvement, 1 Party and 2 Party. The selection of each crash type follows this breakdown:
+
+    **1 Party:** C (Rear End), E (Hit Object), B (Sideswipe)
+
+    **2 Party:** A (Head-on), , D (Broadside), G (Vehicle - Pedestrian), F (Overturned)
+
+5.  New Variable: `Weekend_Yes` that dummifies `Weekdays` into 1 (if the day is on a weekend) and 0 (if the day is not). 
+
+```{r, fig.cap = 'FIGURE 3.1: Preview of Wrangled Data'}
+
+# Dummify Months to be 3 month periods (Seasons)
+car_crash$Month_Seasons <- ifelse(car_crash$Month %in% c(12, 1, 2), "Winter",
+                 ifelse(car_crash$Month %in% c(3, 4, 5), "Spring",
+                 ifelse(car_crash$Month %in% c(6, 7, 8), "Summer", "Fall")))
+
+# Dummify Weekday to be Weekend_Yes (1 or 0)
+car_crash$Weekend_Yes <- ifelse(car_crash$Weekday == "6",1,
+                                ifelse(car_crash$Weekday == "7",1,0))
+
+# Recategorize Crash_Reasons to be "Aggressive Driving", "Negligence" and Other for (12,24)
+car_crash$Crash_Reasons_Categorized <- ifelse(car_crash$Crash_Reasons %in% c(3, 4, 6),
+                                  "Aggressive Driving",
+                                  ifelse(car_crash$Crash_Reasons %in% c(1, 10, 11, 7, 8, 9),"Negligence", "Other"))
+
+# Recategorize CrashType to be Party 1 or 2 (Might need to be adjusted)
+car_crash$Crash_Type_Categorized <- ifelse(car_crash$CrashType %in% c("C", "E", "B"), "1 Party",ifelse(car_crash$CrashType %in% c("A", "F", "D", "G"), "2 Party", "Other"))
+
+
+# Recategorize County to be SoCal, NorCal, Central Cal
+car_crash$County_Categorized <- ifelse(car_crash$County %in% 
+                                     c("SAN DIEGO", "LOS ANGELES", "ORANGE", "RIVERSIDE", "SAN BERNARDINO","IMPERIAL"), "SoCal",
+                            ifelse(car_crash$County %in% c("SAN FRANCISCO", "ALAMEDA", "ALPINE","AMADOR","BUTTE","CALAVERAS","COLUSA","CONTRA COSTA","DEL NORTE","EL DORADO","GLENN","HUMBOLDT","LAKE","LASSEN","SANTA CLARA","SACRAMENTO","MENDOCINO","MARIN","MODOC","NEVADA","SAN MATEO","SAN JOAQUIN","SHASTA","SIERRA","SISKIYOU","SOLANO","SONOMA","SUTTER","STANISLAUS","TEHAMA","TRINITY","TUOLUMNE","YOLO","YUBA","NAPA", "PLACER","PLUMAS"), "NorCal", "Central"))
+
+# Factorize all neccessary categorical variables 
+car_crash$Month_Seasons <- as.factor(car_crash$Month_Seasons)
+car_crash$Severity <- as.factor(car_crash$Severity)
+car_crash$ClearWeather <- as.factor(car_crash$ClearWeather)
+car_crash$Crash_Reasons <- as.factor(car_crash$Crash_Reasons)
+car_crash$CrashType <- as.factor(car_crash$CrashType)
+car_crash$Highway <- as.factor(car_crash$Highway)
+car_crash$Crash_Reasons_Categorized <- as.factor(car_crash$Crash_Reasons_Categorized)
+car_crash$Weekend_Yes <- as.factor(car_crash$Weekend_Yes)
+car_crash$Daylight <- as.factor(car_crash$Daylight)
+car_crash$County_Categorized <- as.factor(car_crash$County_Categorized)
+car_crash$Crash_Type_Categorized <- as.factor(car_crash$Crash_Type_Categorized)
+
+# Preview of Wrangled Data
+car_crash_table <- car_crash[, c(5:7,9:16)] 
+  
+car_crash_table |> 
+  head(n = 500) |> 
+  datatable(caption = 'Interactive Preview of Relevant Variables: Post Data Preparation')
+```
+
+```{r}
+# Complete Same Cleaning Steps for an unfactorized version of the data (Unsupervised)
+# Dummify Months to be 3 month periods (Seasons)
+car_crash_2 <- read_excel("/Users/rileysvensson/Desktop/GSB 530 - Data Mining/GSB 530 - Data Mining/Project/Big_Data_Files (1).xlsx", 
+    sheet = "Car Crash")
+
+car_crash_2$Month_Seasons <- ifelse(car_crash$Month %in% c(12, 1, 2), "Winter",
+                 ifelse(car_crash$Month %in% c(3, 4, 5), "Spring",
+                 ifelse(car_crash$Month %in% c(6, 7, 8), "Summer", "Fall")))
+
+# Dummify Weekday to be Weekend_Yes (1 or 0)
+car_crash_2$Weekend_Yes <- ifelse(car_crash$Weekday == "6",1,
+                                ifelse(car_crash$Weekday == "7",1,0))
+
+# Recategorize Crash_Reasons to be "Aggressive Driving", "Negligence" and Other for (12,24)
+car_crash_2$Crash_Reasons_Categorized <- ifelse(car_crash$Crash_Reasons %in% c(3, 4, 6),
+                                  "Aggressive Driving",
+                                  ifelse(car_crash$Crash_Reasons %in% c(1, 10, 11, 7, 8, 9),"Negligence", "Other"))
+
+# Recategorize CrashType to be Party 1 or 2 (Might need to be adjusted)
+car_crash_2$Crash_Type_Categorized <- ifelse(car_crash$CrashType %in% c("C", "E", "B"), "1 Party",ifelse(car_crash$CrashType %in% c("A", "F", "D", "G"), "2 Party", "Other"))
+
+# Recategorize County to be SoCal, NorCal, Central Cal
+car_crash_2$County_Categorized <- ifelse(car_crash$County %in% 
+                                     c("SAN DIEGO", "LOS ANGELES", "ORANGE", "RIVERSIDE", "SAN BERNARDINO","IMPERIAL"), "SoCal",
+                            ifelse(car_crash$County %in% c("SAN FRANCISCO", "ALAMEDA", "ALPINE","AMADOR","BUTTE","CALAVERAS","COLUSA","CONTRA COSTA","DEL NORTE","EL DORADO","GLENN","HUMBOLDT","LAKE","LASSEN","SANTA CLARA","SACRAMENTO","MENDOCINO","MARIN","MODOC","NEVADA","SAN MATEO","SAN JOAQUIN","SHASTA","SIERRA","SISKIYOU","SOLANO","SONOMA","SUTTER","STANISLAUS","TEHAMA","TRINITY","TUOLUMNE","YOLO","YUBA","NAPA", "PLACER","PLUMAS"), "NorCal", "Central"))
+```
+
+<br />
+
+Following the creation of these five newly categorized variables, `Crash_Reasons_Categorized`, `Crash Type Categorized`, `Weekend_Yes`, `Month_Seasons`, and `County_Categorized`, the set contains all needed predictors and targets to run a logistic regression, decision tree analysis, and k-means clustering.
+
+## Factorization & Data Partitioning:
+
+Another step we needed to complete was to factorize all categorical variables in our dataset, so that they were treated as categories rather than numerical values within our analyses. These included: Month_Seasons, Severity, ClearWeather, Crash_Reasons, CrashType, Highway, Crash_Reasons_Categorized, Weekend_Yes, Daylight, County_Categorized, which should all be considered categorical. Finally we partition the cleaned data-set, using the first 70 percent to train our models, while the remaining 30% is left for validation (evaluate the effectiveness of our model's predictability on unseen data).
+
+```{r}
+# Create Training and Validation Sets of Cleaned Data
+set.seed(1)
+myIndex_1 <- createDataPartition(car_crash$Severity, p=0.9, list=FALSE)
+actual_data <- car_crash[myIndex_1,]
+test_data <- car_crash[-myIndex_1,] 
+
+# Partitioned 70% of 90% bc this was used to produce the optimal Model in testing
+set.seed(1)
+myIndex_2 <- createDataPartition(car_crash$Severity, p=0.7, list=FALSE)
+training_set <- actual_data[myIndex_2,]
+validation_set <- actual_data[-myIndex_2,] 
+```
+
+# Modeling:
+
+## Supervised: Logistic Regression
+
+The modeling process started with an exploratory phase to find intuitive connections between the factors and car crash severity. As mentioned prior, the data preparation included a combination of categorizing and dummifying variables for ease of interpretation and to produce insights that are relevant in a business environment. Some of the main factors that intuitively make sense for a model predicting the severity of a car crash, 1 for fatal or serious injury and 0 for non serious injury, are weather conditions, type of crash, reason for crash and even a certain season within the year. 
+
+![Figure 4.1: Importance of Variables](images/BaggingTree.jpeg){fig-align="center"}
+
+The approach taken for producing models started simple and added complexity to identify which factors had the largest effect on severity. As seen in the figure above, the variables were ranked in order of importance for their effect on accuracy within the model. From this, more complex models were created. For example, the addition of interaction variables between weather conditions and whether it was during the day, or weather conditions and whether an individual is driving on the highway, are interactions that take place in everyday driving scenarios and are beneficial to the predictive capabilities of the model. Listed below our are final posed models:
+
+**Model 1:**
+
+$$ \begin{align*}Severity \sim & B_0 + ClearWeather1 \cdot (B_1) + Daylight1 \cdot (B_2) + WeekendYes1 \cdot (B_3) + \\& Crash\_Reasons\_Categorized(Neglience) \cdot (B_4) +  CrashReasonsCategorized(Other) \cdot (B_5) + \\& Month\_SeasonsSpring \cdot (B_6) +  Month\_SeasonsSummer \cdot (B_7) + Month\_SeasonsWinter \cdot (B_8)\end{align*} $$
+
+**Model 3:** 
+
+$$ \begin{align*}Severity \sim & B_0 + CrashTypeB \cdot (B_1) + CrashTypeC \cdot (B_2) + CrashTypeD \cdot (B_3) + \\& CrashTypeE \cdot (B_4) +  CrashTypeF \cdot (B_5) + CrashTypeG \cdot (B_6) + \\& ClearWeather1 \cdot (B_7) + Daylight1 \cdot (B_8) + WeekendYes1 \cdot (B_9) + \\& Crash\_Reasons\_Categorized(Neglience) \cdot (B_{10}) +  CrashReasonsCategorized(Other) \cdot (B_{11}) + \\& Month\_SeasonsSpring \cdot (B_{12}) +  Month\_SeasonsSummer \cdot (B_{13}) + Month\_SeasonsWinter \cdot (B_{14}) \\& County\_CategorizedNorCal \cdot (B_{15}) + County\_CategorizedSoCal \cdot (B_{16})\end{align*} $$
+
+**Model 5:** $$ \begin{align*}Severity \sim & B_0 + CrashTypeB \cdot (B_1) + CrashTypeC \cdot (B_2) + CrashTypeD \cdot (B_3) + \\& CrashTypeE \cdot (B_4) +  CrashTypeF \cdot (B_5) + CrashTypeG \cdot (B_6) + \\& ClearWeather1 \cdot (B_7) + Daylight1 \cdot (B_8) + Highway1 \cdot (B_9) + \\& Weekend\_Yes1 \cdot (B_{10}) +  Month\_SeasonsSpring \cdot (B_{11}) +  Month\_SeasonsSummer \cdot (B_{12}) \\& + Month\_SeasonsWinter \cdot (B_{13}) + Crash\_Reasons\_Categorized(Neglience) \cdot (B_{14}) \\&   + CrashReasonsCategorized(Other) \cdot (B_{15}) + (ClearWeather1:Daylight1) \cdot (B_{16}) \\& + (ClearWeather1:Highway1) \cdot (B_{17}) + (Daylight1:Highway1) \cdot (B_{18}) \\& + (Daylight1:Weekend\_Yes1) \cdot (B_{19})\end{align*} $$
+
+```{r, echo=FALSE, results = 'hide'}
+# Model 1
+Model1 <- glm(Severity ~ ClearWeather + Daylight + Weekend_Yes + Crash_Reasons_Categorized + Month_Seasons, data = training_set, family = "binomial")
+#summary(Model1)
+#pred<- predict(Model1, newdata = validation_set, type = "response")
+#confusionMatrix(as.factor(ifelse(pred > 0.07, 1, 0)), #validation_set$Severity, positive = "1")
+
+# Gains Table and Cume Lift Value
+#validation$Severity <- as.numeric(as.character(validation$Severity))
+#gain1 <- gains(validation$Severity, pred, groups = 10)
+#gain1
+#plot(c(0, gain1$cume.pct.of.total*sum(validation$Severity))~c(0, gain1$cume.obs), xlab #= "# cases", ylab = "Cumulative", main = "Lift Chart", type = "l", col = "blue")
+#lines(c(0, sum(validation$Severity))~c(0, dim(validation)[1]), lty = 2)
+# ROC plot and AUC value
+#roc_object <- roc(validation$Severity, pred)
+#plot.roc(roc_object)
+#auc(roc_object)
+#barplot(gain1$mean.resp/mean(as.numeric(as.character(validation$Severity))), names.arg=gain1$depth, xlab="Percentile", ylab="Lift", ylim=c(0,7), main="Decile-Wise Lift Chart")
+
+# Model 2 - Non-selected Model 
+#Model2 <- glm(Severity ~ ClearWeather + Daylight + Weekend_Yes + Crash_Reasons_Categorized + Month_Seasons + (ClearWeather*Month_Seasons), data = training_data, family = "binomial")
+#summary(Model2)
+#pred2 <- predict(Model2, newdata = validation, type = "response")
+#confusionMatrix(as.factor(ifelse(pred2 > 0.07, 1, 0)), validation$Severity, positive = "1")
+#roc_object2 <- roc(validation$Severity, pred2)
+#plot.roc(roc_object2)
+#auc(roc_object2)
+
+# Model 3
+Model3 <- glm(Severity ~ CrashType + ClearWeather + Daylight + Weekend_Yes + Crash_Reasons_Categorized + Month_Seasons + County_Categorized, data = training_set, family = "binomial")
+#summary(Model3)
+#pred3 <- predict(Model3, newdata = validation_set, type = "response")
+#confusionMatrix(as.factor(ifelse(pred3 > 0.07, 1, 0)), #validation_set$Severity, positive = "1")
+#roc_object3 <- roc(validation$Severity, pred3)
+#plot.roc(roc_object3)
+#auc(roc_object3)
+
+# Model 4 - Non-selected Model 
+#Model4 <- glm(Severity ~ CrashType + (ClearWeather*Daylight) + ClearWeather + Daylight + Month_Seasons + Weekend_Yes + Crash_Reasons_Categorized, data = training_data, family = "binomial")
+#summary(Model4)
+#pred4 <- predict(Model4, newdata = validation, type = "response")
+#confusionMatrix(as.factor(ifelse(pred4 > 0.07, 1, 0)), validation$Severity, positive = "1")
+#roc_object4 <- roc(validation$Severity, pred4)
+#plot.roc(roc_object4)
+#auc(roc_object4)
+
+# Model 5
+Model5 <- glm(Severity ~ CrashType + (ClearWeather*Daylight) + (ClearWeather*Highway) + (Daylight*Highway) + (Weekend_Yes*Daylight) + Month_Seasons + Weekend_Yes + Crash_Reasons_Categorized, data = training_set, family = "binomial")
+#summary(Model5)
+#pred5 <- predict(Model5, newdata = validation_set, type = "response")
+#confusionMatrix(as.factor(ifelse(pred5 > 0.07, 1, 0)), #validation_set$Severity, positive = "1")
+#roc_object5 <- roc(validation$Severity, pred5)
+#plot.roc(roc_object5)
+#auc(roc_object5)
+```
+
+The summary statistics of each model are:
+
+```{r, fig.cap = 'FIGURE 4.2: Model 1 Summary Statistics'}
+# Model 1 Summary Table
+tidy(Model1) |> 
+  kable(caption = 'Model 1 Summary Statistics', align = 'c') |> 
+  kable_styling(bootstrap_options = c('striped', 'bordered')) 
+```
+
+```{r, fig.cap = 'FIGURE 4.3: Model 3 Summary Statistics'}
+# Model 3 Summary Table
+tidy(Model3) |> 
+  kable(caption = 'Model 3 Summary Statistics', align = 'c') |> 
+  kable_styling(bootstrap_options = c('striped', 'bordered')) 
+```
+
+```{r, fig.cap = 'FIGURE 4.4: Model 5 Summary Statistics'}
+# Model 5 Summary Table
+tidy(Model5) |> 
+  kable(caption = 'Model 5 Summary Statistics', align = 'c') |> 
+  kable_styling(bootstrap_options = c('striped', 'bordered')) 
+```
+
+# Evaluation:
+
+## Supervised: Logistic Regression
+
+Metrics that were important to the evaluation of the models included accuracy, sensitivity, specificity and AUC. The key metrics are accuracy and sensitivity because of the context of the data, as correctly predicting when a car crash is severe is the most important aspect we wish to capture. The comparison of model metrics is illustrated below in the following table, and displays that in terms of a trade-off between all 4 metrics, Model 5 is the optimal choice for usage as an insurance company.
+
+![Figure 5.1: Model Comparison Metrics](images/test.jpg)
+
+Similar to the analysis of the bagging tree that ranks variables in order of importance, the first model was created to evaluate the performance of predictors on a basic level to understand the relationship better. From the output, the variables that are the most significant are Daylight1, Weekend_Yes1, Crash_Reasons_Categorized (Negligence and Other), and Month_SeasonsWinter. While the significance of variables is useful, other metrics are required to understand the efficiency of the model. Model 1 had an overall accuracy rate of 0.6926, but a sensitivity of 0.544. An accuracy score of 0.6926 indicates that Model 1 correctly predicts the severity target variable roughly 69% of the time. **However, a sensitivity score of 0.544 indicates that Model 1 performs significantly worse predicting when the crash was truly severe, only correct roughly 54% of the time**. Because of the reduction from accuracy to sensitivity more models were necessary to optimize the predictive capability.
+
+**Model 3 incorporates two more variables: County_Categorized (between NorCal and SoCal), and CrashType (from A to G)**. Building off of Model 1, crash type and categorized county are vital to the story and predicting severity of car crashes. Compared to Model 1, there are improvements in the metrics used for evaluation. **There is a slight decrease in overall accuracy to 0.6825, however, the improvement in sensitivity is key to the predictions**. With a 12% increase in sensitivity, this model is able to predict 66% of severe crashes. 
+
+Lastly, **Model 5 is the best performing model** with the addition of Highway1 and interactions between clear weather and highway, clear weather and daylight, daylight and highway, and daylight and weekend. It should be noted that the interaction variables are not significant in this model, however, these are logical connections that add value to the predictive capabilities of the model. Accuracy and sensitivity show no drastic change from Model 3, however, the inclusion of **interaction variables produces greater insights**. For that reason Model 5 was deemed the best.
+
+## Supervised: Decision Tree
+
+```{r, echo=TRUE, results = 'hide'}
+# Removing irrelevant columns
+car_crash_dt <- car_crash[ , -c(1:4, 8, 14, 15)]
+
+# Crash Type as a factor
+car_crash_dt$CrashType <- as.factor(car_crash_dt$CrashType)
+car_crash_dt$Severity <- as.factor(car_crash_dt$Severity)
+car_crash_dt$Crash_Reasons <- as.factor(car_crash_dt$Crash_Reasons)
+car_crash_dt$ClearWeather <- as.factor(car_crash_dt$ClearWeather)
+car_crash_dt$Highway <- as.factor(car_crash_dt$Highway)
+car_crash_dt$Daylight <- as.factor(car_crash_dt$Daylight)
+car_crash_dt$Month_Seasons <- as.factor(car_crash_dt$Month_Seasons)
+car_crash_dt$Weekend_Yes <- as.factor(car_crash_dt$Weekend_Yes)
+car_crash_dt$County_Categorized <- as.factor(car_crash_dt$County_Categorized)
+
+# Create validation and training set and set seed to 1
+set.seed(1)
+myIndex3 <- createDataPartition(car_crash_dt$CrashType, p=0.7, list=FALSE)
+trainSet3 <- car_crash_dt[myIndex3,]
+validationSet3 <- car_crash_dt[-myIndex3,]
+
+library(rpart)
+library(rpart.plot)
+# Decision tree Model
+set.seed(1)
+default_tree <- rpart(CrashType ~ ., data = trainSet3, method = 'class')
+#prp(default_tree, type = 1, extra = 1, under = TRUE)
+#printcp(default_tree)
+
+# Summary of full tree
+set.seed(1)
+full_tree <- rpart(CrashType ~ ., data = trainSet3, method = 'class', cp = 0, minsplit = 2,
+                   minbucket = 1)
+#printcp(full_tree)
+#summary(full_tree)
+
+# 0.44562 + 0.0025098 = 0.4481298
+set.seed(1)
+pruned_tree <- prune(full_tree, cp = 0.0005534363)
+#prp(pruned_tree, type = 1, extra = 1, under = TRUE)
+```
+
+```{r}
+
+```
+
+### Optimal Decision Tree
+
+![Figure 5.2: Optimal Decision Tree](images/CarCrash_Decision_Tree.jpeg)
+
+The decision tree model can be used to classify car crash type, which begins with the `Crash_Reasons` variable to determine the crash reason. At the root of the tree, it segments instances where `Crash_Reasons` is either a 3 ("Following Too Closely") or 4 ("Improper Passing"), directing reasons 3,4 to the left and other reasons to the right.  This initial split helps to differentiate between **crashes based on their reasons**, which is the **most significant factor in determining the type of the crash**.
+
+Continuing into the internal nodes, there is further classification by continuously splitting the data. **At the first node with the label 'D', the tree filters crashes by reasons 9 ("Traffic Signals and Signs") or 12 ("Fell Asleep")**. The flow of the decision making depends on whether the reason fits one of these and eventually leads to multiple terminal nodes. The terminal nodes, which include the labels C, B, D, E, and G, show the end of the decision path of the tree. The numbers at these nodes represent the volume of cases in each crash type category.
+
+Overall, the decision tree demonstrates that certain reasons for crashes, when in combination with specific crash types, are more likely to lead to severe injuries. **This structure reveals which combinations of `Crash_Reasons` and `CrashType` are the most predictive** in the data that was used to train the model.
+
+## Unsupervised: K-Means Clustering
+
+```{r}
+# Create Sample for k-means as it is more representative of the whole set
+set.seed(1)
+myIndex_3 <- createDataPartition(car_crash_2$CrashType, p=0.35, list=FALSE)
+car_crash_sample3 <- car_crash_2[myIndex_3,]
+
+car_crash_unsuper_sample3 <- car_crash_sample3[ , -c(1:4, 8, 14:15)]
+
+library(cluster)
+#Run k-means 
+set.seed(1)
+kResult_sample_3 <- pam(car_crash_unsuper_sample3, k = 3)
+#summary(kResult_sample_3)
+#plot(kResult_sample_3)
+```
+
+In terms of evaluating our unsupervised model using k-means clustering, there are no performance metrics or clear methods for determining the usability of our cluster's. However with our questions in mind, we can summarize each component that attributes to a crash's `Severity` to understand why a group is more or less safe than its counterparts.
+
+# Deployment:
+
+## Supervised Insights & Recommendations:
+
+Based on our model evaluation Logistic Model 5 is the best performing model, which has: CrashTypeB, CrashTypeD, CrashType F, CrashType G, Daylight_1, Highway_1, Weekend_Yes1, as the most significant coefficients.  
+
+This **gives us enough evidence to conclude that the following Crash Reasons: Side Swipe, Rear End, Broadside, Overturned, Vehicle/Pedestrian have more impact in causing a fatal accident**. Furthermore, whether the driver was driving during the **day,** on the **highway**, or on the **weekends** are all **important factors** to consider in determining whether or not they are more likely **to be involved in a fatal accident**.
+
+Based on the interpretation of the decision tree model, we can draw key insights that can be relevant to insurance companies and drivers themselves. 
+
+Retouching the models initial split, based on the `Crash Reasons` 'Following Too Closely' (3) and 'Improper Passing' (4), shows the primary factors contributing to the different types of crashes. Taking a look at this differentiation can be crucial for insurance companies. **Policy holders who have a history of these types of collisions or citations for tailgating/improper traffic conduct may be flagged as higher risk** and **can lead to insurance companies raising their rates**. Another use of these insights could be for insurance companies to **educate their clients about the risks associated with these driving behaviors**. 
+
+The terminal nodes provide insights on how often different types of crashes occur. **This can be beneficial in understanding which crash types are more common and severe**. Based on this, it can be decided where to focus more resources/efforts. For example, types of crashes that happen more often might need more safety measures and careful planning for insurance. Additionally, **insurance premiums could be adjusted based on the probability of severe injuries associated with certain crash types**, which can lead to the creation of policies that are more equitable with risk-based pricing models.
+
+In a business sense, the decision tree model serves as a powerful tool for decoding and analyzing the complex crash data for both safety and economic benefit. It allows for a more tailored approach to risk assessment and management. **The structured way of analyzing crash reasons and types, enables both insurance companies and policy holders to make more data informed decisions**. Not only can the information from this analysis contribute to helping reduce the incidence and severity of crashes but it can also play a crucial role in optimizing insurance pricing models.
+
+## Unsupervised Insights:
+
+```{r, fig.cap = 'FIGURE 6.1: Severity Rate of each Cluster'}
+# Add Clusters to original dataframe 
+car_crash_unsuper_sample3_clusters <- data.frame(car_crash_unsuper_sample3, kResult_sample_3$clustering)
+car_crash_unsuper_sample3_clusters$Clusters <- car_crash_unsuper_sample3_clusters$kResult_sample_3.clustering
+
+#Mutate severity to be numeric for graphing
+car_crash_unsuper_sample3_clusters$Severity <- as.numeric(as.character(car_crash_unsuper_sample3_clusters$Severity))
+
+#Graph severity of crashes all columns for each cluster
+ggplot(car_crash_unsuper_sample3_clusters, aes(x = factor(Clusters), y = Severity, fill = factor(Clusters))) + 
+  geom_bar(stat = "summary", fun = "mean") +
+  scale_fill_manual(values = c("green4", "blue3", "red3")) +
+  labs(x = "Cluster", y = "Severity Rate (%)", fill = "Clusters", title = "Severity Across Clusters")
+```
+
+As shown in *Figure 6.1,* Cluster 3 contains the highest `Severity` rate of car crashes of about 10%, Cluster 2 falls in the middle with 7 %, and Cluster 1 is the safest group with nearly 6%. This graphic is highly insightful when combined with the other summary statistics of each relevant factor contributing to crash `Severity`, as we can paint a picture of what features make Cluster 3 more dangerous than the rest, and thus what makes Cluster 1 vastly safer. *Figure 6.2* below displays the average of each numerical variable along with the most common level for each categorical variable, which we can use to tell this story.
+
+```{r, 'FIGURE 6.2: Summary of Relevant Variables of each Cluster'}
+# Means of all Clusters across variables 
+car_unsuper_table <- car_crash_unsuper_sample3_clusters |> 
+  group_by(Clusters) |> 
+  summarise("Avg Severity" = mean(Severity),
+            "Avg Clear Weather" = mean(ClearWeather),
+            Most_Common_Crash_Type = names(sort(table(CrashType), 
+                                                decreasing = TRUE)[1]),
+            Most_Common_County = names(sort(table(County_Categorized), 
+                                                decreasing = TRUE)[1]),
+            Most_Common_Season = names(sort(table(Month_Seasons), 
+                                                decreasing = TRUE)[1]),
+            "Avg Highway" = mean(Highway),
+            "Avg Daylight" = mean(Daylight),
+            "Avg Weekend" = mean(Weekend_Yes),
+            )
+
+car_unsuper_table |> 
+  kable(caption = 'Unsupervised Summary Statistics', align = 'c') |> 
+  kable_styling(bootstrap_options = c('striped', 'bordered'))
+```
+
+<br />
+
+Exploring the results of the K-Means analysis, it is shown that **more accidents happen in clear weather than in the rain**. Taking a look at the clusters, we can see that Cluster 1 had the highest rate of rain (13%) but still remained the least fatal Cluster in terms of severe crashes. A possible explanation could be due to the fact that people tend to avoid driving when it rains. Furthermore, **Rear-Ends (crash type C) appears the most in Cluster 1, the safest Cluster**. On the other hand, **Broadside (crash type D) is most common in Cluster 2 and 3**, the more fatal clusters. This shows that **Broadside causes a significant increase in the probability of whether a crash is fatal or not**. Because of this, it is safe to conclude that Broadside is a more fatal type of crash than the others. 
+
+Continuing with the results, **highways were shown to be safer than non-highways**. This makes sense because as a Broadside is a more fatal type of crash, there is not a lot of opportunity for this to happen on a highway since there is no intersection and everyone moves in the same direction. Read Ends and Sideswipe in this case are more common. Cluster 3 had the drastically lowest rate of highway crashes (1%), while being the most dangerous. Furthermore, the safest cluster (1) contained the most crashes on the highway (40%) which **indicates that the probability of an accident being fatal is lower on the highway**.
+
+Investigating the impact of the seasons is also essential, as the time of year plays a significant role in the occurrence of car crashes. The most common season for all 3 clusters is Spring, which could be explained by the idea that **more drivers are out in Spring following Winter,** and **increasing sunlight causes more crashes during this period**. However, this does not provide a distinguishable factor that explains why Cluster 3 is so dangerous. 
+
+Lastly, it becomes evident that the time of the week, especially the weekends, holds considerable significance in determining the severity of crashes. For instance, **in Cluster 3, a notable 27% of accidents occur during the weekend, suggesting a potential increase in the likelihood of fatal outcomes during these days**. In contrast, when examining the factor of daylight, we observe a different trend. The **presence of daylight shows extremely similar patterns across all three clusters, indicating that it may not be a substantial factor influencing the severity rate of crashes**. This consistency across the clusters suggests that factors other than daylight play a more decisive role in the severity of accidents. The regional analysis of the data reveals another **critical insight**; **the majority of crashes, regardless of their severity, are concentrated in Southern California (SoCal) for all three clusters**. This pattern across the different clusters strongly implies that geographical regions, particularly SoCal, have a significant impact on both the frequency and severity of car crashes. This finding emphasizes the importance of considering regional factors when analyzing road safety and accident data.
+
+## Unsupervised Recommendations:
+
+With the analysis above, we recommend that a insurance company can charge more on premiums for customers who have the following characteristics:
+
+1.  **If the policyholder logs more miles on the weekends than on weekdays.**
+
+2.  **If the policyholder's address is in the SoCal region.**
+
+3.  **If the policyholders have been involved in an accident, especially if they are the cause of a broadside type accident.**
+
+4.  **Create an index (miles per gallon for example) to ballpark whether the policyholders have a habit of driving on streets more or driving on the highway more.** This could be done through a new machine learning project since driving on the highway allows drivers to have better mileage than driving on the street.
+
+In conclusion, current policyholders that belong in Cluster 3 and future policyholders that have similar characteristics to Cluster 3 are worth an insurance company's outreach and marketing effort, as they provide the opportunity to generate the highest revenue.
