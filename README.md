@@ -14,4 +14,4 @@ Throughout the program, I participated in **2 consultancy projects** for innovat
 ## Contact
 
 - Email: [rileysvensson@gmail.com](mailto:rileysvensson@gmail.com)
-- LinkedIn: [LinkedIn](https://www.linkedin.com/in/rileysvensson/)
+- LinkedIn: [https://www.linkedin.com/in/rileysvensson/](https://www.linkedin.com/in/rileysvensson/)
